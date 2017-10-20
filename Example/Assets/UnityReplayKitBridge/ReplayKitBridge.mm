@@ -11,6 +11,7 @@
 
 const char *kCallbackTarget = "ReplayKitBridge";
 #define documentsDirectory [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) objectAtIndex:0]
+#define SUBVIEW_TAG 4200
 
 @interface ReplayKitBridge : NSObject <RPScreenRecorderDelegate, RPPreviewViewControllerDelegate>
 
@@ -24,6 +25,8 @@ const char *kCallbackTarget = "ReplayKitBridge";
 @property (strong, nonatomic) AVAssetWriter *assetWriter;
 @property (strong, nonatomic) AVAssetWriterInput *assetWriterVideoInput;
 @property (strong, nonatomic) AVAssetWriterInput *assetWriterAudioInput;
+@property (strong, nonatomic) UIWindow *overlayWindow;
+@property (nonatomic) BOOL avPermissionsGranted;
 
 @end
 
@@ -44,6 +47,32 @@ static ReplayKitBridge *_sharedInstance = nil;
 }
 
 #pragma mark - Screen recording
+
+- (void) setupOverlayWindow {
+    CGRect frame = CGRectMake(0, 0, 50, 50);
+    _overlayWindow = [[UIWindow alloc] initWithFrame:frame];
+    _overlayWindow.backgroundColor =  [UIColor clearColor];
+    
+    UIView *controlsView = [[UIView alloc] initWithFrame:_overlayWindow.bounds];
+    [_overlayWindow addSubview:controlsView];
+    
+    UIButton *but=[UIButton buttonWithType:UIButtonTypeRoundedRect];
+    but.frame= CGRectMake(0, 0, 50, 50);
+    [but setTitle:@"Stop Recording" forState:UIControlStateNormal];
+    [but addTarget:self action:@selector(recordingButtonCallback) forControlEvents:UIControlEventTouchUpInside];
+    [controlsView addSubview:but];
+    
+    [_overlayWindow addSubview:controlsView];
+    [_overlayWindow setTag:SUBVIEW_TAG];
+    [_overlayWindow makeKeyAndVisible];
+}
+
+- (void) recordingButtonCallback {
+    [self stopRecording];
+    UIView * subview = [_overlayWindow viewWithTag:SUBVIEW_TAG];
+    [subview removeFromSuperview];
+    _overlayWindow.hidden = YES;
+}
 
 - (void)addCameraPreviewView {
     if ([self.screenRecorder respondsToSelector:@selector(cameraPreviewView)]) {
@@ -66,10 +95,58 @@ static ReplayKitBridge *_sharedInstance = nil;
     }
 }
 
-- (void)startRecording {    
-    NSError *error = nil;
+- (void)setupVideoWriter {
+    bool canAddVideoWriter = false;
+    
+    NSDictionary *compressionProperties = @{AVVideoProfileLevelKey         : AVVideoProfileLevelH264HighAutoLevel,
+                                            AVVideoH264EntropyModeKey      : AVVideoH264EntropyModeCABAC,
+                                            AVVideoAverageBitRateKey       : @(1920 * 1080 * 11.4),
+                                            AVVideoMaxKeyFrameIntervalKey  : @60,
+                                            AVVideoAllowFrameReorderingKey : @NO};
+    
+    NSDictionary *videoSettings = @{AVVideoCompressionPropertiesKey : compressionProperties,
+                                    AVVideoCodecKey                 : AVVideoCodecTypeH264,
+                                    AVVideoWidthKey                 : @1080,
+                                    AVVideoHeightKey                : @1920};
+    
+    
+    //Video Input
+    self.assetWriterVideoInput = [AVAssetWriterInput assetWriterInputWithMediaType:AVMediaTypeVideo outputSettings:videoSettings];
+    canAddVideoWriter = [self.assetWriter canAddInput:self.assetWriterVideoInput];
+    
+    if (canAddVideoWriter) {
+        [self.assetWriter addInput:self.assetWriterVideoInput];
+        [self.assetWriterVideoInput setMediaTimeScale:60];
+        [self.assetWriter setMovieTimeScale:60];
+        [self.assetWriterVideoInput setExpectsMediaDataInRealTime:YES];
+    }
+
+}
+
+- (void)setupAudioWriter {
     bool canAddAudioWriter = false;
     
+    //Audio Input Settings
+    NSMutableDictionary* audioSettings = [NSMutableDictionary dictionaryWithObjectsAndKeys:
+                                          [NSNumber numberWithInt:kAudioFormatMPEG4AAC], AVFormatIDKey,
+                                          [NSNumber numberWithFloat: 44100.0], AVSampleRateKey,
+                                          [NSNumber numberWithFloat: 64000], AVEncoderBitRateKey,
+                                          [NSNumber numberWithUnsignedInteger:1], AVNumberOfChannelsKey,
+                                          nil];
+    
+    //Audio Input
+    self.assetWriterAudioInput = [AVAssetWriterInput assetWriterInputWithMediaType:AVMediaTypeAudio outputSettings:audioSettings];
+    canAddAudioWriter = [self.assetWriter canAddInput:self.assetWriterAudioInput];
+    
+    if (canAddAudioWriter)
+    {
+        self.assetWriterAudioInput.expectsMediaDataInRealTime = YES; //true;
+        [self.assetWriter addInput:self.assetWriterAudioInput];
+    }
+}
+
+- (void) setupFileWriter {
+    NSError *error = nil;
     self.videoOutPath = [[documentsDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@"%u", arc4random() % 1000]] stringByAppendingPathExtension:@"mp4"];
     NSLog(@"Video %@", self.videoOutPath);
     
@@ -82,97 +159,102 @@ static ReplayKitBridge *_sharedInstance = nil;
     }
     
     self.assetWriter = [AVAssetWriter assetWriterWithURL:[NSURL fileURLWithPath:self.videoOutPath] fileType:AVFileTypeMPEG4 error:&error];
-    
-    //Asset Settings
-    NSDictionary *compressionProperties = @{AVVideoProfileLevelKey         : AVVideoProfileLevelH264HighAutoLevel,
-                                            AVVideoH264EntropyModeKey      : AVVideoH264EntropyModeCABAC,
-                                            AVVideoAverageBitRateKey       : @(1920 * 1080 * 11.4),
-                                            AVVideoMaxKeyFrameIntervalKey  : @60,
-                                            AVVideoAllowFrameReorderingKey : @NO};
-    
-    NSDictionary *videoSettings = @{AVVideoCompressionPropertiesKey : compressionProperties,
-                                    AVVideoCodecKey                 : AVVideoCodecTypeH264,
-                                    AVVideoWidthKey                 : @1080,
-                                    AVVideoHeightKey                : @1920};
-    
-    //Audio Input Settings
-    NSMutableDictionary* audioSettings = [NSMutableDictionary dictionaryWithObjectsAndKeys:
-                                          [NSNumber numberWithInt:kAudioFormatMPEG4AAC], AVFormatIDKey,
-                                          [NSNumber numberWithFloat: 44100.0], AVSampleRateKey,
-                                          [NSNumber numberWithFloat: 64000], AVEncoderBitRateKey,
-                                          [NSNumber numberWithUnsignedInteger:1], AVNumberOfChannelsKey,
-                                          nil];
+}
+
+- (void)startRecording {
+    //    __typeof__(self) __weak weakSelf = self;
+    //    void (^handler)(NSError * _Nullable) = ^(NSError * _Nullable error){
+    //        // [weakSelf addCameraPreviewView];
+    //        UnitySendMessage(kCallbackTarget, "OnStartRecording", "");
+    //    };
     
     
-    //Video Input
-    self.assetWriterVideoInput = [AVAssetWriterInput assetWriterInputWithMediaType:AVMediaTypeVideo outputSettings:videoSettings];
-    [self.assetWriter addInput:self.assetWriterVideoInput];
-    [self.assetWriterVideoInput setMediaTimeScale:60];
-    [self.assetWriter setMovieTimeScale:60];
-    [self.assetWriterVideoInput setExpectsMediaDataInRealTime:YES];
     
-    //Audio Input
-    self.assetWriterAudioInput = [AVAssetWriterInput assetWriterInputWithMediaType:AVMediaTypeAudio outputSettings:audioSettings];
-    canAddAudioWriter = [self.assetWriter canAddInput:self.assetWriterAudioInput];
-    
-    if (canAddAudioWriter)
-    {
-        self.assetWriterAudioInput.expectsMediaDataInRealTime = YES; //true;
-        [self.assetWriter addInput:self.assetWriterAudioInput];
-    }
+    [self setupFileWriter];
+    [self setupVideoWriter];
+    [self setupAudioWriter];
+    [self setupOverlayWindow];
     
     [[RPScreenRecorder sharedRecorder] setMicrophoneEnabled:YES];
     
-    [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo completionHandler:^(BOOL granted) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (granted)
-            {
-                //TODO: Encapsulate in other function.
-                [self.screenRecorder startCaptureWithHandler:^(CMSampleBufferRef  _Nonnull sampleBuffer, RPSampleBufferType bufferType, NSError * _Nullable error) {
-                    if (self.assetWriter.status == AVAssetWriterStatusUnknown) {
+    [self requestAVPermissions];
+    
+    
+}
+
+- (void)requestAVPermissions {
+    if(!self.avPermissionsGranted) {
+        [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo completionHandler:^(BOOL granted) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (granted)
+                {
+                    [self replayCaptureMicAndVideo];
+                }
+                else {
+                    NSLog(@"Permmisions Failure AV!");
+                }
+            });
+        }];
+        return;
+    }
+    
+    [self replayCaptureMicAndVideo];
+}
+
+- (void)replayCaptureMicAndVideo {
+    [self.screenRecorder startCaptureWithHandler:^(CMSampleBufferRef  _Nonnull sampleBuffer, RPSampleBufferType bufferType, NSError * _Nullable error) {
+        if (self.assetWriter.status == AVAssetWriterStatusUnknown) {
+            @try {
+                [self.assetWriter startWriting];
+                [self.assetWriter startSessionAtSourceTime:CMSampleBufferGetPresentationTimeStamp(sampleBuffer)];
+            }
+            @catch(NSException *expection) {
+                NSLog(@"Status FAILS!: %i", (int)self.assetWriter.status);
+            }
+        }
+        
+        if(self.assetWriter == nil) {
+            return;
+        }
+        
+        if (CMSampleBufferDataIsReady(sampleBuffer)) {
+            
+            if (self.assetWriter.status == AVAssetWriterStatusFailed) {
+                NSLog(@"An error occured.");
+                NSLog(@"Error %@", self.assetWriter.error);
+                return;
+            }
+            
+            if(self.assetWriter.status == AVAssetWriterStatusWriting) {
+                if (bufferType == RPSampleBufferTypeVideo) {
+                    if (self.assetWriterVideoInput.isReadyForMoreMediaData) {
                         @try {
-                            [self.assetWriter startWriting];
-                            [self.assetWriter startSessionAtSourceTime:CMSampleBufferGetPresentationTimeStamp(sampleBuffer)];
+                            [self.assetWriterVideoInput appendSampleBuffer:sampleBuffer];
                         }
                         @catch(NSException *expection) {
-                            NSLog(@"Status FAILS!: %i", (int)self.assetWriter.status);
-                        }
-                    }
-                    
-                    if(self.assetWriter == nil) {
-                        return;
-                    }
-                    
-                    if (CMSampleBufferDataIsReady(sampleBuffer)) {
-                        
-                        if (self.assetWriter.status == AVAssetWriterStatusFailed) {
-                            NSLog(@"An error occured.");
-                            NSLog(@"Error %@", self.assetWriter.error);
-                            return;
-                        }
-                        
-                        if(self.assetWriter.status == AVAssetWriterStatusWriting) {
-                            if (bufferType == RPSampleBufferTypeVideo) {
-                                if (self.assetWriterVideoInput.isReadyForMoreMediaData) {
-                                    [self.assetWriterVideoInput appendSampleBuffer:sampleBuffer];
-                                }
-                            }
-                            
-                            if (bufferType == RPSampleBufferTypeAudioMic) {
-                                if (self.assetWriterAudioInput.isReadyForMoreMediaData) {
-                                    [self.assetWriterAudioInput appendSampleBuffer:sampleBuffer];
-                                }
-                            }
+                            NSLog(@"Missed Video Buffer Write %@", self.assetWriter.error);
                         }
                         
                     }
-                } completionHandler:^(NSError * _Nullable error) {
-                    if (!error) {
-                        NSLog(@"Recording started successfully.");
+                }
+                
+                if (bufferType == RPSampleBufferTypeAudioMic) {
+                    if (self.assetWriterAudioInput.isReadyForMoreMediaData) {
+                        @try {
+                            [self.assetWriterAudioInput appendSampleBuffer:sampleBuffer];
+                        }
+                        @catch(NSException *expection) {
+                            NSLog(@"Missed Audio Buffer Write %@", self.assetWriter.error);
+                        }
                     }
-                }];
+                }
             }
-        });
+            
+        }
+    } completionHandler:^(NSError * _Nullable error) {
+        if (!error) {
+            NSLog(@"Recording started successfully.");
+        }
     }];
 }
 
@@ -209,7 +291,7 @@ static ReplayKitBridge *_sharedInstance = nil;
         [rootViewController presentViewController:self.previewViewController animated:YES completion:nil];
         return YES;
     }
-
+    
     return NO;
 }
 
@@ -265,10 +347,10 @@ static ReplayKitBridge *_sharedInstance = nil;
 
 - (void)screenRecorder:(RPScreenRecorder *)screenRecorder didStopRecordingWithError:(NSError *)error previewViewController:(RPPreviewViewController *)previewViewController {
     [self removeCameraPreviewView];
-
+    
     self.previewViewController = previewViewController;
     self.previewViewController.previewControllerDelegate = self;
-
+    
     UnitySendMessage(kCallbackTarget, "OnStopRecordingWithError", error.description.UTF8String);
 }
 
