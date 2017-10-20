@@ -76,7 +76,6 @@ static ReplayKitBridge *_sharedInstance = nil;
 
 - (void)addCameraPreviewView {
     if ([self.screenRecorder respondsToSelector:@selector(cameraPreviewView)]) {
-        // iOS 10 or later
         UIView *cameraPreviewView = self.screenRecorder.cameraPreviewView;
         if (cameraPreviewView) {
             UIViewController *rootViewController = UnityGetGLViewController();
@@ -87,7 +86,6 @@ static ReplayKitBridge *_sharedInstance = nil;
 
 - (void)removeCameraPreviewView {
     if ([self.screenRecorder respondsToSelector:@selector(cameraPreviewView)]) {
-        // iOS 10 or later
         UIView *cameraPreviewView = self.screenRecorder.cameraPreviewView;
         if (cameraPreviewView) {
             [cameraPreviewView removeFromSuperview];
@@ -96,8 +94,6 @@ static ReplayKitBridge *_sharedInstance = nil;
 }
 
 - (void)setupVideoWriter {
-    bool canAddVideoWriter = false;
-    
     NSDictionary *compressionProperties = @{AVVideoProfileLevelKey         : AVVideoProfileLevelH264HighAutoLevel,
                                             AVVideoH264EntropyModeKey      : AVVideoH264EntropyModeCABAC,
                                             AVVideoAverageBitRateKey       : @(1920 * 1080 * 11.4),
@@ -112,15 +108,10 @@ static ReplayKitBridge *_sharedInstance = nil;
     
     //Video Input
     self.assetWriterVideoInput = [AVAssetWriterInput assetWriterInputWithMediaType:AVMediaTypeVideo outputSettings:videoSettings];
-    canAddVideoWriter = [self.assetWriter canAddInput:self.assetWriterVideoInput];
-    
-    if (canAddVideoWriter) {
-        [self.assetWriter addInput:self.assetWriterVideoInput];
-        [self.assetWriterVideoInput setMediaTimeScale:60];
-        [self.assetWriter setMovieTimeScale:60];
-        [self.assetWriterVideoInput setExpectsMediaDataInRealTime:YES];
-    }
-
+    [self.assetWriter addInput:self.assetWriterVideoInput];
+    [self.assetWriterVideoInput setMediaTimeScale:60];
+    [self.assetWriter setMovieTimeScale:60];
+    [self.assetWriterVideoInput setExpectsMediaDataInRealTime:YES];
 }
 
 - (void)setupAudioWriter {
@@ -178,8 +169,6 @@ static ReplayKitBridge *_sharedInstance = nil;
     [[RPScreenRecorder sharedRecorder] setMicrophoneEnabled:YES];
     
     [self requestAVPermissions];
-    
-    
 }
 
 - (void)requestAVPermissions {
@@ -190,15 +179,12 @@ static ReplayKitBridge *_sharedInstance = nil;
                 {
                     [self replayCaptureMicAndVideo];
                 }
-                else {
-                    NSLog(@"Permmisions Failure AV!");
-                }
             });
         }];
-        return;
     }
-    
-    [self replayCaptureMicAndVideo];
+    else {
+        NSLog(@"Permmisions Failure AV!");
+    }
 }
 
 - (void)replayCaptureMicAndVideo {
@@ -228,24 +214,13 @@ static ReplayKitBridge *_sharedInstance = nil;
             if(self.assetWriter.status == AVAssetWriterStatusWriting) {
                 if (bufferType == RPSampleBufferTypeVideo) {
                     if (self.assetWriterVideoInput.isReadyForMoreMediaData) {
-                        @try {
-                            [self.assetWriterVideoInput appendSampleBuffer:sampleBuffer];
-                        }
-                        @catch(NSException *expection) {
-                            NSLog(@"Missed Video Buffer Write %@", self.assetWriter.error);
-                        }
-                        
+                        [self.assetWriterVideoInput appendSampleBuffer:sampleBuffer];
                     }
                 }
                 
                 if (bufferType == RPSampleBufferTypeAudioMic) {
                     if (self.assetWriterAudioInput.isReadyForMoreMediaData) {
-                        @try {
-                            [self.assetWriterAudioInput appendSampleBuffer:sampleBuffer];
-                        }
-                        @catch(NSException *expection) {
-                            NSLog(@"Missed Audio Buffer Write %@", self.assetWriter.error);
-                        }
+                        [self.assetWriterAudioInput appendSampleBuffer:sampleBuffer];
                     }
                 }
             }
@@ -275,6 +250,7 @@ static ReplayKitBridge *_sharedInstance = nil;
     [self.screenRecorder stopCaptureWithHandler:^(NSError * _Nullable error) {
         if (!error) {
             NSLog(@"Recording stopped successfully. Cleaning up...");
+            UnitySendMessage(kCallbackTarget, "OnStopRecording", "");
             [self.assetWriter finishWritingWithCompletionHandler:^{
                 UISaveVideoAtPathToSavedPhotosAlbum(self.videoOutPath, nil, nil, nil);
                 self.assetWriterVideoInput = nil;
