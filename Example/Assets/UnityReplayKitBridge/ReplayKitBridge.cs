@@ -1,9 +1,13 @@
 ﻿using UnityEngine;
 using System.Runtime.InteropServices;
 
-public class ReplayKitBridge : MonoBehaviour {
-    #region Declare external C interface
-    #if UNITY_IOS && !UNITY_EDITOR
+public class ReplayKitBridge : MonoBehaviour
+{
+	#region Declare external C interface
+#if UNITY_IOS && !UNITY_EDITOR
+    [DllImport("__Internal")]
+    private static extern void _rp_startBroadcasting();
+
     [DllImport("__Internal")]
     private static extern void _rp_startRecording();
 
@@ -36,150 +40,205 @@ public class ReplayKitBridge : MonoBehaviour {
 
     [DllImport("__Internal")]
     private static extern void _rp_setMicrophoneEnabled(bool microphoneEnabled);
-    #endif
-    #endregion
+#endif
+	#endregion
 
-    #region Wrapped methods and properties
-    public static void StartRecording() {
-        #if UNITY_IOS && !UNITY_EDITOR
+	#region Wrapped methods and properties
+	public static void StartBroadcasting()
+	{
+#if UNITY_IOS && !UNITY_EDITOR
+        _rp_startBroadcasting();
+#endif
+	}
+
+	public static void StartRecording()
+	{
+#if UNITY_IOS && !UNITY_EDITOR
         _rp_startRecording();
-        #endif
-    }
+#endif
+	}
 
-    public static void CancelRecording() {
-        #if UNITY_IOS && !UNITY_EDITOR
+	public static void CancelRecording()
+	{
+#if UNITY_IOS && !UNITY_EDITOR
         _rp_cancelRecording();
-        #endif
-    }
+#endif
+	}
 
-    public static void StopRecording() {
-        #if UNITY_IOS && !UNITY_EDITOR
+	public static void StopRecording()
+	{
+#if UNITY_IOS && !UNITY_EDITOR
         _rp_stopRecording();
-        #endif
-    }
+#endif
+	}
 
-    public static bool PresentPreviewView() {
-        #if UNITY_IOS && !UNITY_EDITOR
+	public static bool PresentPreviewView()
+	{
+#if UNITY_IOS && !UNITY_EDITOR
         return _rp_presentPreviewView();
-        #else
-        return false;
-        #endif
-    }
+#else
+		return false;
+#endif
+	}
 
-    public static void DismissPreviewView() {
-        #if UNITY_IOS && !UNITY_EDITOR
+	public static void DismissPreviewView()
+	{
+#if UNITY_IOS && !UNITY_EDITOR
         _rp_dismissPreviewView();
-        #endif
-    }
+#endif
+	}
 
-    public static bool IsScreenRecorderAvailable {
-        get {
-            #if UNITY_IOS && !UNITY_EDITOR
+	public static bool IsScreenRecorderAvailable
+	{
+		get
+		{
+#if UNITY_IOS && !UNITY_EDITOR
             return _rp_isScreenRecorderAvailable();
-            #else
-            return false;
-            #endif
-        }
-    }
+#else
+			return false;
+#endif
+		}
+	}
 
-    public static bool IsRecording {
-        get {
-            #if UNITY_IOS && !UNITY_EDITOR
+	public static bool IsRecording
+	{
+		get
+		{
+#if UNITY_IOS && !UNITY_EDITOR
             return _rp_isRecording();
-            #else
-            return false;
-            #endif
-        }
-    }
+#else
+			return false;
+#endif
+		}
+	}
 
-    public static bool IsCameraEnabled {
-        get {
-            #if UNITY_IOS && !UNITY_EDITOR
+	public static bool IsCameraEnabled
+	{
+		get
+		{
+#if UNITY_IOS && !UNITY_EDITOR
             return _rp_isCameraEnabled();
-            #else
-            return false;
-            #endif
-        }
-        set {
-            #if UNITY_IOS && !UNITY_EDITOR
+#else
+			return false;
+#endif
+		}
+		set
+		{
+#if UNITY_IOS && !UNITY_EDITOR
             _rp_setCameraEnabled(value);
-            #endif
-        }
-    }
+#endif
+		}
+	}
 
-    public static bool IsMicrophoneEnabled {
-        get {
-            #if UNITY_IOS && !UNITY_EDITOR
+	public static bool IsMicrophoneEnabled
+	{
+		get
+		{
+#if UNITY_IOS && !UNITY_EDITOR
             return _rp_isMicrophoneEnabled();
-            #else
-            return false;
-            #endif
-        }
-        set {
-            #if UNITY_IOS && !UNITY_EDITOR
+#else
+			return false;
+#endif
+		}
+		set
+		{
+#if UNITY_IOS && !UNITY_EDITOR
             _rp_setMicrophoneEnabled(value);
-            #endif
-        }
-    }
-    #endregion
+#endif
+		}
+	}
+	#endregion
 
-    #region Singleton implementation
-    private static ReplayKitBridge _instance;
-    public static ReplayKitBridge Instance {
-        get {
-            if (_instance == null) {
-                var obj = new GameObject("ReplayKitBridge");
-                _instance = obj.AddComponent<ReplayKitBridge>();
-            }
-            return _instance;
-        }
-    }
+	#region Singleton implementation
+	private static ReplayKitBridge _instance;
+	public static ReplayKitBridge Instance
+	{
+		get
+		{
+			if (_instance == null)
+			{
+				var obj = new GameObject("ReplayKitBridge");
+				_instance = obj.AddComponent<ReplayKitBridge>();
+			}
+			return _instance;
+		}
+	}
 
-    void Awake() {
-        if (_instance != null) {
-            Destroy(gameObject);
-            return;
-        }
+	void Awake()
+	{
+		if (_instance != null)
+		{
+			Destroy(gameObject);
+			return;
+		}
 
-        DontDestroyOnLoad(gameObject);
-    }
-    #endregion
+		DontDestroyOnLoad(gameObject);
+	}
+	#endregion
 
-    #region Delegates
-    public System.Action onStartRecordingCallback;
-    public System.Action onCancelRecordingCallback;
-    public System.Action onStopRecordingCallback;
-    public System.Action<string> onStopRecordingWithErrorCallback;
-    public System.Action<string> onFinishPreviewCallback;
+	#region Delegates
+	public System.Action onStartRecordingCallback;
+	public System.Action onCancelRecordingCallback;
+	public System.Action onStopRecordingCallback;
+	public System.Action onStartBroadcastingCallback;
+	public System.Action onStopBroadcastingCallback;
+	public System.Action<string> onStopRecordingWithErrorCallback;
+	public System.Action<string> onFinishPreviewCallback;
 
-    public void OnStartRecording() {
-        if (onStartRecordingCallback != null) {
-            onStartRecordingCallback.Invoke();
-        }
-    }
+	public void OnStartRecording()
+	{
+		if (onStartRecordingCallback != null)
+		{
+			onStartRecordingCallback.Invoke();
+		}
+	}
 
-    public void OnCancelRecording() {
-        if (onCancelRecordingCallback != null) {
-            onCancelRecordingCallback.Invoke();
-        }
-    }
+	public void OnCancelRecording()
+	{
+		if (onCancelRecordingCallback != null)
+		{
+			onCancelRecordingCallback.Invoke();
+		}
+	}
 
-    public void OnStopRecording() {
-        if (onStopRecordingCallback != null) {
-            onStopRecordingCallback.Invoke();
-        }
-    }
+	public void OnStartBroadcasting()
+	{
+		if (onStartBroadcastingCallback != null)
+		{
+			onStartBroadcastingCallback.Invoke();
+		}
+	}
 
-    public void OnStopRecordingWithError(string error) {
-        if (onStopRecordingWithErrorCallback != null) {
-            onStopRecordingWithErrorCallback.Invoke(error);
-        }
-    }
+		public void OnStopBroadcasting()
+	{
+		if (onStopBroadcastingCallback != null)
+		{
+			onStopBroadcastingCallback.Invoke();
+		}
+	}
 
-    public void OnFinishPreview(string activityType) {
-        if (onFinishPreviewCallback != null) {
-            onFinishPreviewCallback.Invoke(activityType);
-        }
-    }
-    #endregion
+	public void OnStopRecording()
+	{
+		if (onStopRecordingCallback != null)
+		{
+			onStopRecordingCallback.Invoke();
+		}
+	}
+
+	public void OnStopRecordingWithError(string error)
+	{
+		if (onStopRecordingWithErrorCallback != null)
+		{
+			onStopRecordingWithErrorCallback.Invoke(error);
+		}
+	}
+
+	public void OnFinishPreview(string activityType)
+	{
+		if (onFinishPreviewCallback != null)
+		{
+			onFinishPreviewCallback.Invoke(activityType);
+		}
+	}
+	#endregion
 }

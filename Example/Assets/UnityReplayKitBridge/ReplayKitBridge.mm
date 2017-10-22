@@ -13,7 +13,10 @@ const char *kCallbackTarget = "ReplayKitBridge";
 #define documentsDirectory [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) objectAtIndex:0]
 #define SUBVIEW_TAG 4200
 
-@interface ReplayKitBridge : NSObject <RPScreenRecorderDelegate, RPPreviewViewControllerDelegate>
+@interface ReplayKitBridge : NSObject <RPScreenRecorderDelegate, RPPreviewViewControllerDelegate, RPBroadcastControllerDelegate, RPBroadcastActivityViewControllerDelegate>
+
+@property (strong, nonatomic) RPBroadcastActivityViewController *broadcastAVC;
+@property (strong, nonatomic) RPBroadcastController *broadcastC;
 
 @property (strong, nonatomic) RPPreviewViewController *previewViewController;
 @property (nonatomic, readonly) RPScreenRecorder *screenRecorder;
@@ -46,10 +49,57 @@ static ReplayKitBridge *_sharedInstance = nil;
     return [RPScreenRecorder sharedRecorder];
 }
 
-#pragma mark - Screen recording
+#pragma mark - Broadcast
 
-- (void) setupOverlayWindow {
-    CGRect frame = CGRectMake(0, 0, 50, 50);
+- (void)startBroadcasting {
+    [[RPScreenRecorder sharedRecorder] setMicrophoneEnabled:YES];
+    [[AVAudioSession sharedInstance] requestRecordPermission: ^(BOOL granted){ }];
+    
+    if (![RPScreenRecorder sharedRecorder].isRecording) {
+        [RPBroadcastActivityViewController loadBroadcastActivityViewControllerWithHandler:^(RPBroadcastActivityViewController * _Nullable broadcastActivityViewController, NSError * _Nullable error) {
+            if (error) {
+                NSLog(@"RPBroadcast err %@", [error localizedDescription]);
+            }
+            
+            broadcastActivityViewController.delegate = self;
+            broadcastActivityViewController.modalPresentationStyle = UIModalPresentationPopover;
+            _broadcastAVC = broadcastActivityViewController;
+            
+            [[UIApplication sharedApplication].keyWindow.rootViewController presentViewController:_broadcastAVC animated:YES completion: ^{
+                NSLog(@">> %s", __func__);
+            }];
+        }];
+    }
+    
+    [RPBroadcastActivityViewController loadBroadcastActivityViewControllerWithHandler:^(RPBroadcastActivityViewController * _Nullable broadcastActivityViewController, NSError * _Nullable error) {
+        _broadcastAVC = broadcastActivityViewController;
+        _broadcastAVC.delegate = self;
+    }];
+}
+
+- (void)broadcastActivityViewController:(nonnull RPBroadcastActivityViewController *)broadcastActivityViewController didFinishWithBroadcastController:(nullable RPBroadcastController *)broadcastController error:(nullable NSError *)error {
+    [_broadcastAVC dismissViewControllerAnimated:YES completion:nil];
+    
+    if(!error) {
+        _broadcastC = broadcastController;
+        _broadcastC.delegate = self;
+        UnitySendMessage(kCallbackTarget, "OnStartBroadcasting", "");
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self setupBroadcastingOverlayWindow];
+        });
+        
+        [_broadcastC startBroadcastWithHandler:^(NSError * _Nullable error) {
+            NSLog(@">>>> %s", __func__);
+        }];
+    }
+    else {
+        NSLog(@"Broadcast could not be started error: %@", error);
+        UnitySendMessage(kCallbackTarget, "OnStopBroadcasting", "");
+    }
+}
+
+- (void)setupBroadcastingOverlayWindow {
+    CGRect frame = CGRectMake(0, 0, 100, 100);
     _overlayWindow = [[UIWindow alloc] initWithFrame:frame];
     _overlayWindow.backgroundColor =  [UIColor clearColor];
     
@@ -57,7 +107,59 @@ static ReplayKitBridge *_sharedInstance = nil;
     [_overlayWindow addSubview:controlsView];
     
     UIButton *but=[UIButton buttonWithType:UIButtonTypeRoundedRect];
-    but.frame= CGRectMake(0, 0, 50, 50);
+    but.frame= CGRectMake(0, 0, 100, 100);
+    [but setTitle:@"Stop Broadcasting" forState:UIControlStateNormal];
+    [but addTarget:self action:@selector(broadcastingButtonCallback) forControlEvents:UIControlEventTouchUpInside];
+    [controlsView addSubview:but];
+    
+    [_overlayWindow addSubview:controlsView];
+    [_overlayWindow setTag:SUBVIEW_TAG];
+    [_overlayWindow makeKeyAndVisible];
+}
+
+- (void)broadcastingButtonCallback {
+    UnitySendMessage(kCallbackTarget, "OnStopBroadcasting", "");
+    
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIView * subview = [_overlayWindow viewWithTag:SUBVIEW_TAG];
+        [subview removeFromSuperview];
+        _overlayWindow.hidden = YES;
+    });
+    
+    [_broadcastC finishBroadcastWithHandler:^(NSError * _Nullable error) {
+        if (!error) {
+            NSLog(@"Broadcasting stopped successfully. Cleaning up...");
+        }
+        else {
+            NSLog(@"Stopping broadcast failed.");
+        }
+    }];
+}
+
+#pragma mark - RPBroadcastControllerDelegate
+- (void)broadcastController:(RPBroadcastController *)broadcastController
+       didUpdateServiceInfo:(NSDictionary <NSString *, NSObject <NSCoding> *> *)serviceInfo {
+    NSLog(@"didUpdateServiceInfo: %@", serviceInfo);
+}
+
+// Broadcast service encountered an error
+- (void)broadcastController:(RPBroadcastController *)broadcastController
+         didFinishWithError:(NSError *)error {
+    NSLog(@"didFinishWithError: %@", error);
+}
+
+#pragma mark - Screen recording
+- (void) setupRecordingOverlayWindow {
+    CGRect frame = CGRectMake(0, 0, 100, 100);
+    
+    _overlayWindow = [[UIWindow alloc] initWithFrame:frame];
+    _overlayWindow.backgroundColor =  [UIColor clearColor];
+    
+    UIView *controlsView = [[UIView alloc] initWithFrame:_overlayWindow.bounds];
+    [_overlayWindow addSubview:controlsView];
+    
+    UIButton *but=[UIButton buttonWithType:UIButtonTypeRoundedRect];
+    but.frame= CGRectMake(0, 0, 100, 100);
     [but setTitle:@"Stop Recording" forState:UIControlStateNormal];
     [but addTarget:self action:@selector(recordingButtonCallback) forControlEvents:UIControlEventTouchUpInside];
     [controlsView addSubview:but];
@@ -152,43 +254,36 @@ static ReplayKitBridge *_sharedInstance = nil;
     self.assetWriter = [AVAssetWriter assetWriterWithURL:[NSURL fileURLWithPath:self.videoOutPath] fileType:AVFileTypeMPEG4 error:&error];
 }
 
+
 - (void)startRecording {
-    //    __typeof__(self) __weak weakSelf = self;
-    //    void (^handler)(NSError * _Nullable) = ^(NSError * _Nullable error){
-    //        // [weakSelf addCameraPreviewView];
-    //        UnitySendMessage(kCallbackTarget, "OnStartRecording", "");
-    //    };
-    
-    
-    
     [self setupFileWriter];
     [self setupVideoWriter];
     [self setupAudioWriter];
-    [self setupOverlayWindow];
+    [self setupRecordingOverlayWindow];
     
     [[RPScreenRecorder sharedRecorder] setMicrophoneEnabled:YES];
-    
     [self requestAVPermissions];
 }
 
 - (void)requestAVPermissions {
-    if(!self.avPermissionsGranted) {
-        [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo completionHandler:^(BOOL granted) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if (granted)
-                {
-                    [self replayCaptureMicAndVideo];
-                }
-            });
-        }];
-    }
-    else {
-        NSLog(@"Permmisions Failure AV!");
-    }
+    [[AVAudioSession sharedInstance] requestRecordPermission: ^(BOOL granted){
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (granted)
+            {
+                [self replayCaptureMicAndVideo];
+            }
+        });
+    }];
 }
 
 - (void)replayCaptureMicAndVideo {
+    
     [self.screenRecorder startCaptureWithHandler:^(CMSampleBufferRef  _Nonnull sampleBuffer, RPSampleBufferType bufferType, NSError * _Nullable error) {
+        if(CMSampleBufferDataIsReady(sampleBuffer) == false)
+        {
+            return;
+        }
+        
         if (self.assetWriter.status == AVAssetWriterStatusUnknown) {
             @try {
                 [self.assetWriter startWriting];
@@ -214,13 +309,24 @@ static ReplayKitBridge *_sharedInstance = nil;
             if(self.assetWriter.status == AVAssetWriterStatusWriting) {
                 if (bufferType == RPSampleBufferTypeVideo) {
                     if (self.assetWriterVideoInput.isReadyForMoreMediaData) {
-                        [self.assetWriterVideoInput appendSampleBuffer:sampleBuffer];
+                        @try {
+                            [self.assetWriterVideoInput appendSampleBuffer:sampleBuffer];
+                        }
+                        @catch(NSException *expection) {
+                            NSLog(@"Missed Video Buffer: %@", self.assetWriter.error);
+                        }
                     }
                 }
                 
+                
                 if (bufferType == RPSampleBufferTypeAudioMic) {
                     if (self.assetWriterAudioInput.isReadyForMoreMediaData) {
-                        [self.assetWriterAudioInput appendSampleBuffer:sampleBuffer];
+                        @try {
+                            [self.assetWriterAudioInput appendSampleBuffer:sampleBuffer];
+                        }
+                        @catch(NSException *expection) {
+                            NSLog(@"Missed Audio Buffer: %@", self.assetWriter.error);
+                        }
                     }
                 }
             }
@@ -258,6 +364,9 @@ static ReplayKitBridge *_sharedInstance = nil;
                 self.assetWriter = nil;
             }];
         }
+        else {
+            NSLog(@"Failed stopping recording");
+        }
     }];
 }
 
@@ -289,28 +398,24 @@ static ReplayKitBridge *_sharedInstance = nil;
 
 - (BOOL)isCameraEnabled {
     if ([self.screenRecorder respondsToSelector:@selector(isCameraEnabled)]) {
-        // iOS 10 or later
         return self.screenRecorder.cameraEnabled;
     }
 }
 
 - (void)setCameraEnabled:(BOOL)cameraEnabled {
     if ([self.screenRecorder respondsToSelector:@selector(setCameraEnabled:)]) {
-        // iOS 10 or later
         self.screenRecorder.cameraEnabled = cameraEnabled;
     }
 }
 
 - (BOOL)isMicrophoneEnabled {
     if ([self.screenRecorder respondsToSelector:@selector(isMicrophoneEnabled)]) {
-        // iOS 10 or later
         return self.screenRecorder.microphoneEnabled;
     }
 }
 
 - (void)setMicrophoneEnabled:(BOOL)microphoneEnabled {
     if ([self.screenRecorder respondsToSelector:@selector(setMicrophoneEnabled:)]) {
-        // iOS 10 or later
         self.screenRecorder.microphoneEnabled = microphoneEnabled;
         return;
     }
@@ -322,10 +427,15 @@ static ReplayKitBridge *_sharedInstance = nil;
 }
 
 - (void)screenRecorder:(RPScreenRecorder *)screenRecorder didStopRecordingWithError:(NSError *)error previewViewController:(RPPreviewViewController *)previewViewController {
-    [self removeCameraPreviewView];
+    //    [self removeCameraPreviewView];
+    //    self.previewViewController = previewViewController;
+    //    self.previewViewController.previewControllerDelegate = self;
     
-    self.previewViewController = previewViewController;
-    self.previewViewController.previewControllerDelegate = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIView * subview = [_overlayWindow viewWithTag:SUBVIEW_TAG];
+        [subview removeFromSuperview];
+        _overlayWindow.hidden = YES;
+    });
     
     UnitySendMessage(kCallbackTarget, "OnStopRecordingWithError", error.description.UTF8String);
 }
@@ -347,6 +457,10 @@ static ReplayKitBridge *_sharedInstance = nil;
 #pragma mark - C interface
 
 extern "C" {
+    void _rp_startBroadcasting() {
+        [[ReplayKitBridge sharedInstance] startBroadcasting];
+    }
+    
     void _rp_startRecording() {
         [[ReplayKitBridge sharedInstance] startRecording];
     }
