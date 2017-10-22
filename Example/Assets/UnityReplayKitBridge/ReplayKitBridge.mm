@@ -83,7 +83,9 @@ static ReplayKitBridge *_sharedInstance = nil;
     if(!error) {
         _broadcastC = broadcastController;
         _broadcastC.delegate = self;
+        
         UnitySendMessage(kCallbackTarget, "OnStartBroadcasting", "");
+        
         dispatch_async(dispatch_get_main_queue(), ^{
             [self setupBroadcastingOverlayWindow];
         });
@@ -118,13 +120,14 @@ static ReplayKitBridge *_sharedInstance = nil;
 }
 
 - (void)broadcastingButtonCallback {
-    UnitySendMessage(kCallbackTarget, "OnStopBroadcasting", "");
     
     dispatch_async(dispatch_get_main_queue(), ^{
         UIView * subview = [_overlayWindow viewWithTag:SUBVIEW_TAG];
         [subview removeFromSuperview];
         _overlayWindow.hidden = YES;
     });
+    
+    UnitySendMessage(kCallbackTarget, "OnStopBroadcasting", "");
     
     [_broadcastC finishBroadcastWithHandler:^(NSError * _Nullable error) {
         if (!error) {
